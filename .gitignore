@@ -1,0 +1,11 @@
+# Build / artefatos PyInstaller
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Estado do usuário (não versionar config da máquina local)
+config.json
+
+# Spec gerada automaticamente pelo PyInstaller
+monitor-leve.spec
