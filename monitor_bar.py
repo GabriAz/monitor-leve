@@ -808,12 +808,16 @@ class MonitorBar:
                       fill=DIM, anchor="w", tags="tabbody")
         px = 10
         for name in PRESETS:
-            c.create_rectangle(px, 70, px + 78, 96, outline=NEON,
-                               width=1, tags=("tabbody", "preset", name))
-            c.create_text(px + 39, 83, text=name, font=("Consolas", 9),
-                          fill=CORE, tags=("tabbody", "preset", name))
-            c.tag_bind("preset", "<Button-1>",
-                       lambda e, n=name: self._apply_preset(n))
+            # Vive por item (nao por tag "preset"): a tag e compartilhada pelos 4
+            # botoes, e tag_bind sobrescreveria a binding — no fim todos
+            # chamariam _apply_preset da ultima (Rede). Binding por id resolve.
+            box = c.create_rectangle(px, 70, px + 78, 96, outline=NEON,
+                                     width=1, tags=("tabbody", name))
+            lbl = c.create_text(px + 39, 83, text=name, font=("Consolas", 9),
+                                fill=CORE, tags=("tabbody", name))
+            for item in (box, lbl):
+                c.tag_bind(item, "<Button-1>",
+                           lambda e, n=name: self._apply_preset(n))
             px += 88
 
         c.create_line(10, 110, w - 10, 110, fill=NEON, width=1,
