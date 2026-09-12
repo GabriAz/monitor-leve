@@ -34,6 +34,7 @@ Name: "autostart"; Description: "Iniciar junto com o &Windows (recomendado)"; Gr
 
 [Files]
 Source: "dist\monitor-leve.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "PresentMon.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -439,7 +439,132 @@ def collect() -> dict:
     """Junta a coleta rápida com o cache lento (nunca bloqueia)."""
     d = collect_cheap()
     d.update(_slow_cache)   # mescla o que já foi amostrado (ou {} no início)
+    d["fps"] = latest_fps()
     return d
+
+
+# ---------------------------------------------------------------------------
+# FPS (frames por segundo) via PresentMon — Intel, licença MIT.
+#
+# Não há counter simples (psutil/WMI/Get-Counter) que exponha "frames
+# apresentados por segundo" de um jogo; a forma vendor-neutral (NVIDIA e AMD,
+# DirectX/OpenGL/Vulkan) é o PresentMon, que lê eventos ETW de *present* no
+# nível do SO. Aqui o mantemos como subprocess em modo streaming (--output_stdout)
+# e reduzimos o frame time a uma média móvel => FPS.
+# ---------------------------------------------------------------------------
+
+_FPS_PROC = None                 # subprocess.Popen do PresentMon (None = não rodando)
+_fps_rolling: list[float] = []   # janela dos últimos frame-times (ms)
+_FPS_WINDOW = 60                 # nº de frames para a média móvel (≈ 1s a 60fps)
+_fps_lock = threading.Lock()
+
+
+def _presentmon_exe() -> str | None:
+    """Caminho do PresentMon.exe, resolvido igual ao config.json (frozen-aware)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    for name in ("PresentMon-2.5.1-x64.exe", "PresentMon.exe"):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _fps_reader(proc):
+    """Lê o CSV stdout do PresentMon e alimenta a janela de frame-times.
+
+    A coluna MsBetweenPresents é o intervalo entre Present() => 1000/x = FPS
+    de render. Ignoramos linhas de cabeçalho e frames com métrica inexistente.
+    """
+    global _fps_rolling
+    header_seen = False
+    ms_idx = None
+    try:
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            cols = line.split(",")
+            if not header_seen:
+                # a linha de cabeçalho lista os nomes das colunas
+                header_seen = True
+                for i, c in enumerate(cols):
+                    if c.strip().lower() == "msbetweenpresents":
+                        ms_idx = i
+                        break
+                continue
+            if ms_idx is None or ms_idx >= len(cols):
+                continue
+            try:
+                ms = float(cols[ms_idx])
+            except ValueError:
+                continue
+            with _fps_lock:
+                _fps_rolling.append(ms)
+                if len(_fps_rolling) > _FPS_WINDOW:
+                    _fps_rolling.pop(0)
+    except Exception:
+        pass
+
+
+def start_fps_monitor() -> bool:
+    """Inicia o subprocess do PresentMon em segundo plano. Idempotente.
+
+    Retorna True se conseguiu iniciar (ou já está rodando), False se o binário
+    não existe / não pôde rodar (ex.: usuário sem Performance Log Users).
+    """
+    global _FPS_PROC
+    if _FPS_PROC is not None and _FPS_PROC.poll() is None:
+        return True
+    exe = _presentmon_exe()
+    if exe is None:
+        return False
+    try:
+        proc = subprocess.Popen(
+            [exe,
+             "--output_stdout",
+             "--no_csv",
+             "--no_console_stats",
+             "--session_name", "monitor-leve",
+             "--stop_existing_session"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return False
+    _FPS_PROC = proc
+    threading.Thread(target=_fps_reader, args=(proc,), daemon=True).start()
+    return True
+
+
+def stop_fps_monitor():
+    global _FPS_PROC
+    if _FPS_PROC is not None:
+        try:
+            _FPS_PROC.terminate()
+        except Exception:
+            pass
+        _FPS_PROC = None
+
+
+def latest_fps() -> float | None:
+    """FPS atual (média móvel) ou None quando não há frames recentes.
+
+    Considera o valor "morto" (None) se a última amostra é mais velha que ~2s,
+    para a barra não exibir FPS fantasma quando o jogo para de renderizar.
+    """
+    with _fps_lock:
+        if not _fps_rolling:
+            return None
+        import statistics
+        avg_ms = statistics.fmean(_fps_rolling)
+    if avg_ms <= 0:
+        return None
+    return 1000.0 / avg_ms
 
 
 def top_processes(n: int = 5) -> list[tuple[str, float]]:

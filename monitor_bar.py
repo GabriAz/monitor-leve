@@ -25,6 +25,7 @@ from collections import deque
 
 from monitor import (
     collect_cheap, collect, sample_slow, _fmt_rate, top_processes,
+    start_fps_monitor, stop_fps_monitor,
 )
 
 
@@ -171,6 +172,7 @@ METRICS = {
     "gpu":      {"label": "GPU", "width": 4, "desc": "Placa de vídeo (VRAM usada)"},
     "gpu_util": {"label": "G3D", "width": 4, "desc": "Uso real do processador gráfico (%)"},
     "freq":     {"label": "GHz", "width": 4, "desc": "Velocidade atual do processador"},
+    "fps":      {"label": "FPS", "width": 4, "desc": "Frames por segundo (PresentMon)"},
     "net":      {"label": "↓↑",  "width": 16, "desc": "Rede: download e upload"},
     "dsk":      {"label": "DSK", "width": 4, "desc": "Disco principal (uso %)"},
     "ping":     {"label": "MS",  "width": 4, "desc": "Latência de internet (milissegundos)"},
@@ -183,14 +185,14 @@ METRICS = {
 # Presets de configuração (listas de chaves na ordem desejada).
 PRESETS = {
     "Compacto": ["cpu", "mem", "net", "up", "clock"],
-    "Completo": ["cpu", "mem", "gpu", "gpu_util", "freq", "net", "dsk",
+    "Completo": ["cpu", "mem", "gpu", "gpu_util", "freq", "fps", "net", "dsk",
                  "ping", "vpn", "up", "clock"],
-    "Gamer":    ["cpu", "gpu", "gpu_util", "freq", "net", "up", "clock"],
+    "Gamer":    ["cpu", "gpu", "gpu_util", "freq", "fps", "net", "up", "clock"],
     "Rede":     ["net", "ping", "vpn", "dsk", "up", "clock"],
 }
 
 # Ordem default (usada quando não há config.json).
-DEFAULT_ORDER = ["cpu", "mem", "gpu", "gpu_util", "freq", "net", "dsk",
+DEFAULT_ORDER = ["cpu", "mem", "gpu", "gpu_util", "freq", "fps", "net", "dsk",
                  "ping", "vpn", "up", "clock"]
 
 
@@ -511,6 +513,8 @@ class MonitorBar:
                 continue
             if key == "ping" and d.get("ping") is None:
                 continue
+            if key == "fps" and d.get("fps") is None:
+                continue
             out.append(key)
         return out
 
@@ -554,6 +558,9 @@ class MonitorBar:
         if key == "freq":
             f = d.get("freq")
             return f"{f / 1000:.1f}" if f else "n/d"
+        if key == "fps":
+            fps = d.get("fps")
+            return f"{fps:.0f}" if fps is not None else "n/d"
         if key == "net":
             # rjust(8) interno mantem o bloco duplo de rede estavel (nao respira).
             down = _fmt_rate(d.get("net_down", 0)).rjust(8)
@@ -949,6 +956,7 @@ class MonitorBar:
         self._bar_w = w
 
     def _on_exit(self, *_):
+        stop_fps_monitor()
         if self._abd is not None:
             self._abd.cbSize = ctypes.sizeof(APPBARDATA)
             shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(self._abd))
@@ -985,6 +993,7 @@ class MonitorBar:
 
     def run(self):
         self._register_appbar()
+        start_fps_monitor()   # best-effort: sem binário/privilégio fica n/d
         self._tick()
         self.root.mainloop()
 

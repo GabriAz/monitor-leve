@@ -7,5 +7,8 @@ __pycache__/
 # Estado do usuário (não versionar config da máquina local)
 config.json
 
+# PresentMon baixado pelo build (artefato terceiro, MIT)
+PresentMon.exe
+
 # Spec gerada automaticamente pelo PyInstaller
 monitor-leve.spec

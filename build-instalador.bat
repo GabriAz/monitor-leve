@@ -21,12 +21,21 @@ if not exist "%PY%" (
     exit /b 1
 )
 
-echo [1/3] Gerando icone caso nao exista...
+echo [1/4] Gerando icone caso nao exista...
 if not exist "app.ico" (
     "%PY%" -c "from PIL import Image,ImageDraw;S=256;img=Image.new('RGBA',(S,S),(0,0,0,0));d=ImageDraw.Draw(img);cx=S//2;d.rounded_rectangle([8,8,S-8,S-8],radius=48,fill=(13,13,17,255));pts=[(cx,cy-92),(cx+18,cy-62),(cx+44,cy-34),(cx+48,cy-2),(cx+30,cy+28),(cx+8,cy+48),(cx,cy+54),(cx-8,cy+48),(cx-30,cy+28),(cx-48,cy-2),(cx-44,cy-34),(cx-18,cy-62)];d.polygon(pts,fill=(255,85,0,255),outline=(255,179,77,255));d.line([(cx,cy-85),(cx,cy+48)],fill=(255,122,26,255),width=6);img.save('app.ico',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)]);print('  app.ico criado')"
 )
 
-echo [2/3] Compilando monitor-leve.exe (PyInstaller)...
+echo [2/4] Baixando PresentMon.exe caso nao exista (medicao de FPS)...
+if not exist "PresentMon.exe" (
+    echo        baixando PresentMon v2.5.1 (Intel, MIT)...
+    "%PY%" -c "import urllib.request;urllib.request.urlretrieve('https://github.com/GameTechDev/PresentMon/releases/download/v2.5.1/PresentMon-2.5.1-x64.exe','PresentMon.exe')"
+    if not exist "PresentMon.exe" (
+        echo [ERRO] Nao conseguiu baixar PresentMon.exe. FPS ficara n/d.
+    )
+)
+
+echo [3/4] Compilando monitor-leve.exe (PyInstaller)...
 "%PY%" -m PyInstaller --noconfirm --onefile --noconsole --name "monitor-leve" --icon app.ico --collect-submodules psutil monitor_bar.py
 if errorlevel 1 (
     echo [ERRO] PyInstaller falhou. Verifique se instalou: pip install pyinstaller
@@ -34,7 +43,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] Montando instalador (Inno Setup)...
+echo [4/4] Montando instalador (Inno Setup)...
 set "ISCC="
 for %%p in (
     "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
