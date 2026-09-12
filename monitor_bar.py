@@ -16,6 +16,7 @@ from ctypes import wintypes
 import datetime
 import json
 import os
+import sys
 import threading
 import time
 import tkinter as tk
@@ -26,7 +27,22 @@ from monitor import (
     collect_cheap, collect, sample_slow, _fmt_rate, top_processes,
 )
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+def _config_dir() -> str:
+    """Pasta onde o config.json mora (estável, sobrevive a reexecuções).
+
+    PyInstaller `--onefile` extrai o app num dir temporário `_MEIxxxx` que é
+    apagado ao fechar: `__file__` aponta pra lá, então qualquer config gravada
+    junto dali se perde. Frozen => gravar junto ao exe real (sys.executable),
+    que fica em %LOCALAPPDATA%\Programs\monitor-leve\ (gravável sem admin). Em
+    dev, continua na pasta do repo.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_FILE = os.path.join(_config_dir(), "config.json")
 
 # ---------------------------------------------------------------------------
 # Assinatura visual
@@ -441,8 +457,11 @@ class MonitorBar:
         self.order = self._config.get("order") or list(DEFAULT_ORDER)
         self.order = [k for k in self.order if k in METRICS]
 
+        # Barra ocupa 100% da largura do monitor (fininha)
+        self.full_width = True
+
         self._shrink_counter = 0
-        self._w = self._compute_width()
+        self._w = self._monitor_width()
         self._h = self.line_h + PAD_Y * 2 + LINE_W
 
         self.canvas = tk.Canvas(self.root, width=self._w, height=self._h,
@@ -499,6 +518,15 @@ class MonitorBar:
         """Modulos na ordem final (auto-hide aplicado), para computar largura."""
         # No primeiro render (sem dados), usa a ordem cheia sem auto-hide.
         return self._available_keys()
+
+    def _monitor_width(self):
+        """Largura total do monitor selecionado (em px) para o modo 100%."""
+        monitors = _get_monitors()
+        if not monitors:
+            return user32.GetSystemMetrics(0)
+        idx = max(0, min(self.display_index - 1, len(monitors) - 1))
+        l, t, r, b = monitors[idx]["mon"]
+        return r - l
 
     def _compute_width(self):
         keys = self._visible_keys()
@@ -579,9 +607,26 @@ class MonitorBar:
         c.create_line(0, self._h - LINE_W, self._w, self._h - LINE_W,
                       fill=NEON, width=LINE_W)
 
+        segments = self._segments()
+        n = len(segments)
+        if n == 0:
+            return
+
+        # Largura natural (px) de cada módulo + o separador "· " entre eles.
+        widths = []
+        for i, (label, value) in enumerate(segments):
+            w = (len(label) + 1) * self.cw if label else 0
+            w += len(value) * self.cw
+            widths.append(w)
+
+        content_w = sum(widths) + (n - 1) * 2 * self.cw   # + "· " entre módulos
+        avail = self._w - PAD_X * 2
+        # Folga distribuída igualmente ENTRE módulos (justificado na tela).
+        gap = (avail - content_w) / (n - 1) if n > 1 else 0.0
+        gap = max(0.0, gap)
+
         self._hit_regions = []
         x = PAD_X
-        segments = self._segments()
         for i, (label, value) in enumerate(segments):
             x0 = x
             if label:
@@ -589,13 +634,12 @@ class MonitorBar:
                 x += len(label) * self.cw + self.cw
             c.create_text(x, y, text=value, font=self.font, fill=DIM, anchor="w")
             x += len(value) * self.cw
-            # separador "·" apenas entre modulos (nunca depois do ultimo)
-            if i < len(segments) - 1:
-                c.create_text(x, y, text="·", font=self.font, fill=GLOW, anchor="w")
-                x += self.cw
-            c.create_text(x, y, text=" ", font=self.font, fill=BG, anchor="w")
-            x += self.cw
             self._hit_regions.append((x0, x, "panel"))
+            # separador "· " + folga justificada, só entre módulos (não pós último)
+            if i < n - 1:
+                c.create_text(x, y, text="·", font=self.font, fill=GLOW, anchor="w")
+                x += self.cw            # ponto
+                x += self.cw + gap      # espaco fixo + folga justificada
 
     def _on_click(self, e):
         # Clique em qualquer segmento abre/fecha o painel proprio.
@@ -654,7 +698,10 @@ class MonitorBar:
         self.display_index = i
         self._config["display"] = i
         self._save_config(self._config)
-        self._register_appbar()   # reposiciona a barra na tela escolhida
+        # Reposiciona a barra na tela escolhida (largura nova do monitor)
+        self._w = self._monitor_width()
+        self.canvas.config(width=self._w)
+        self._register_appbar()
 
     # ------------------------------------------------------------------
     # Configuracao (presets + ordenacao de modulos) em um Toplevel proprio.
@@ -790,7 +837,10 @@ class MonitorBar:
         self.order = [k for k in self.order if k in METRICS]
         self._config["order"] = list(self.order)
         self._save_config(self._config)
-        self._resize()
+        if self.full_width:
+            self._set_width(self._monitor_width())
+        else:
+            self._resize()
         self._render()
 
     def _apply_preset(self, name):
@@ -838,7 +888,11 @@ class MonitorBar:
         self._register_appbar()
 
     def _maybe_resize(self):
-        """Cresce na hora quando estoura; encolhe so apos 3 ticks estaveis."""
+        """Em full_width a largura é fixa (monitor). Em modo normal, comporta-se como antes."""
+        if self.full_width:
+            # Largura fixa ao monitor; nao redimensiona baseado no conteudo.
+            self._shrink_counter = 0
+            return
         needed = self._needed_width()
         if needed > self._w + 4:
             self._shrink_counter = 0
@@ -865,7 +919,10 @@ class MonitorBar:
             # Usa o retangulo TOTAL (mon), que NAO encolhe, para nem sempre que
             # registrar o appbar de novo empilhar espaco em cima do anterior.
             l, t, r, b = monitors[idx]["mon"]
-        desired = RECT(r - self._w - 8, b - self._h, r, b)
+        # No modo full_width a barra ocupa TODA a largura do monitor (fininha).
+        w_bar = (r - l) if self.full_width else self._w
+        desired = RECT(l + 0, b - self._h, r, b)
+        desired.right = l + w_bar
 
         abd = APPBARDATA()
         abd.cbSize = ctypes.sizeof(APPBARDATA)
